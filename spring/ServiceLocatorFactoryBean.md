@@ -29,6 +29,11 @@ serviceMappings 中查找对应的实现类的beanName，然后调用getBean()�
 注入到 IoC容器中即可
 
 ## 3 运行流程详解
+Spring扫描到 ServiceLocatorFactoryBean 后，会注册到BeanDefinitionMap 中，
+当一个实现了 setServiceLocatorInterface 传入的接口的类需要被注入时，
+Spring会遍历 BeanDefinitionMap 中的 BeanDefinition，问bean本身的type和
+Class<?> getObjectType()方法返回的type是否符合当前接口，符合则会把代理类注入
+到 IoC容器中。  
 整个生命周期分为三个阶段：初始化阶段、代理生成阶段、方法调用阶段。
 
 ### 阶段一：属性注入与初始化
