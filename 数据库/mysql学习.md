@@ -17,4 +17,20 @@
 * 读已提交（Read Committed）：一个事务只能读取另一个事务已提交的数据。
 * 可重复读（Repeatable Read）：一个事务在执行过程中多次读取同一数据，结果是一致的。
 * 串行化（Serializable）：事务串行执行，避免了幻读问题。  
-RC、RR、SERIALIZABLE 都是基于 MVCC 实现的。
+RC、RR、SERIALIZABLE 都是基于 MVCC 实现的。  
+
+# 索引
+like abc% 会走索引，执行计划的type是 range ，like %abc 不会走索引。除非是覆盖索引。
+覆盖索引，就是全索引 扫描，不需要回表。执行计划的type是index， Extra = Using index。
+
+| Type           |   描述    |    性能 | 常见场景                    |
+|:---------------|:-------:|------:|:------------------------|
+| system / const | 单行/常量查找 | ⭐⭐⭐⭐⭐ | 主键/唯一索引等值查询             |
+| eq_ref         | 唯一索引关联  |  ⭐⭐⭐⭐ | JOIN 关联主键               |
+| ref            | 非唯一索引查找 |   ⭐⭐⭐ | 普通索引等值查询                |
+| range          |  范围查找   |   ⭐⭐⭐ | > < between like 'abc%' |
+| index          |  索引全扫描  |    ⭐⭐ | 覆盖索引、LIKE '%abc' (命中索引) |
+| ALL            |  全表扫描   |     ⭐ | 无索引、LIKE '%abc' (未命中索引) |
+一句话记住： 优化 SQL 的目标，就是尽量让 type 往上走，争取出现 ref、range 甚至 eq_ref，
+尽量避免出现 ALL。  
+
