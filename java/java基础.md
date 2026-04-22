@@ -1,3 +1,11 @@
+# TODO
+* 集合框架：HashMap（数组+链表+红黑树原理）、
+ConcurrentHashMap（分段锁/CAS）、ArrayList 等。  
+* 并发包 (JUC)：ThreadPoolExecutor（线程池状态
+机）、ReentrantLock（AQS 原理）、ThreadLocal。  
+* 基础：String的不可变性
+
+
 ## equals()方法的严格判断和宽松判断
 equals()方法通常会有getClass()和instanceof两种判断方式，前者必须是类型一致
 后者是类型兼容，比如A是B的父类，那么A instanceof B 返回true。JDK 官方类库
