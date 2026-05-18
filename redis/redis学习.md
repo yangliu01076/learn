@@ -1,3 +1,6 @@
+# 学习资源
+电子书：https://huangz.works/redisbook/
+
 # Pipeline 和 Transaction 的区别
 Pipeline 是 Redis 提供的非原子性批量操作命令，可以一次性执行多个命令，
 但是每个命令的执行是独立的，不保证原子性。一个命令失败不会影响其他命令的执行。  
