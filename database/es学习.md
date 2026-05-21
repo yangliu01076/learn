@@ -1,4 +1,5 @@
 # 总览
+[学习文档](https://www.elastic.co/guide/en/elasticsearch/guide/master/_next_steps.html)  
 elesticsearch 是基于lucene的分布式全文检索引擎，
 可以用于全文检索，结构化检索，分析等。  
 * 主要的数据结构是LSM Tree  
