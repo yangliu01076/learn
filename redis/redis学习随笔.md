@@ -77,3 +77,6 @@ Redis 4.0 开始支持混合持久化，将 RDB 和 AOF 的优点结合起来。
 服务准备就绪  
 
 # RESP协议
+
+# Redisson WatchDog 机制：
+
