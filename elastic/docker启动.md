@@ -3,7 +3,9 @@ docker run -d \
 --net elastic-net \
 -p 9200:9200 \
 -e "discovery.type=single-node" \
--e "XPACK_SECURITY_ENABLED=false" \
+-e "xpack.security.enabled=false" \
+-e "xpack.security.http.ssl.enabled=false" \
+-e "xpack.security.transport.ssl.enabled=false" \
 -e "ES_JAVA_OPTS=-Xms512m -Xmx512m" \
 -v es-data:/usr/share/elasticsearch/data \
 docker.elastic.co/elasticsearch/elasticsearch:8.12.0
