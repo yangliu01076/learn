@@ -1,0 +1,170 @@
+@startuml
+skinparam ranksep 30
+skinparam dpi 150
+skinparam sequenceMessageAlign center
+
+actor Developer as dev
+
+box "Spring Boot 启动入口" #LightBlue
+participant "SpringApplication" as SpringApp
+end box
+
+box "核心容器 (AbstractApplicationContext)" #WhiteSmoke
+participant "AbstractApplicationContext" as AC
+participant "PostProcessorRegistrationDelegate" as PPRD
+participant "DefaultListableBeanFactory" as BLF
+participant "AbstractAutowireCapableBeanFactory" as AACBF
+end box
+
+dev -> SpringApp: **run(args)**
+activate SpringApp
+
+SpringApp -> SpringApp: prepareEnvironment()\n准备环境变量
+note right of SpringApp #E0FFFF
+  <b>【SpringBoot 事件 1】</b>
+  发布 ApplicationEnvironmentPreparedEvent
+  (此时上下文还未创建，监听器可在此修改环境变量，如解密配置)
+end note
+SpringApp --> dev : ApplicationEnvironmentPreparedEvent
+
+SpringApp -> SpringApp: createApplicationContext()\n创建 ApplicationContext
+SpringApp -> SpringApp: prepareContext()\n设置环境、BeanNameGenerator等
+
+== 核心阶段：刷新上下文 ==
+SpringApp -> AC: **refresh()**
+activate AC
+
+== 1. 准备阶段 ==
+AC -> AC: prepareRefresh()
+
+== 2. 获取 BeanFactory ==
+AC -> AC: obtainFreshBeanFactory()
+
+== 3. 准备 BeanFactory ==
+AC -> AC: prepareBeanFactory()
+
+== 4. 子类扩展 (Web等) ==
+AC -> AC: postProcessBeanFactory()
+
+== 5. 【扩展点1】执行 BeanFactoryPostProcessor ==
+AC -> PPRD: invokeBeanFactoryPostProcessors()
+activate PPRD
+note over PPRD #FFE4B5
+  <b>【开发者扩展点 1】</b>
+  1. BeanDefinitionRegistryPostProcessor (动态注册 BeanDefinition)
+  2. BeanFactoryPostProcessor (修改 BeanDefinition)
+end note
+PPRD -> BLF: 遍历执行
+deactivate PPRD
+
+== 6. 注册 BeanPostProcessor ==
+AC -> PPRD: registerBeanPostProcessors()
+activate PPRD
+note over PPRD #FFE4B5
+  <b>【开发者扩展点 2】</b>
+  将所有 BeanPostProcessor 实例化并注册到容器中
+end note
+PPRD -> BLF: addBeanPostProcessor()
+deactivate PPRD
+
+== 7. 初始化 MessageSource 等 ==
+AC -> AC: initMessageSource()\ninitApplicationEventMulticaster()
+
+== 8. 子类初始化 (Web服务器等) ==
+AC -> AC: onRefresh()
+note over AC #E6E6FA
+  <b>【开发者扩展点 3】</b>
+  SpringBoot 在此创建 WebServer (Tomcat/Netty)。
+end note
+
+== 9. 注册监听器 ==
+AC -> AC: registerListeners()
+
+== 10. 实例化所有非懒加载单例 Bean ==
+AC -> BLF: finishBeanFactoryInitialization()
+activate BLF
+BLF -> AACBF: preInstantiateSingletons() -> createBean()
+
+note over AACBF #FFE4B5
+  <b>【开发者扩展点 4】Bean 生命周期核心阶段</b>
+end note
+
+AACBF -> AACBF: **doCreateBean()**
+activate AACBF
+
+AACBF -> AACBF: 1. createBeanInstance()
+note right of AACBF #FFE4B5
+  <b>【扩展点 4.1】</b>
+  InstantiationAwareBeanPostProcessor.postProcessBeforeInstantiation
+end note
+
+AACBF -> AACBF: 2. addSingletonFactory()\n(三级缓存，解决循环依赖)
+
+AACBF -> AACBF: 3. populateBean()
+note right of AACBF #FFE4B5
+  <b>【扩展点 4.2】</b>
+  InstantiationAwareBeanPostProcessor
+  - postProcessAfterInstantiation
+  - postProcessProperties (解析 @Autowired, @Value)
+end note
+
+AACBF -> AACBF: 4. initializeBean()
+activate AACBF #DarkSeaGreen
+
+AACBF -> AC: 4.1 invokeAwareMethods\n(BeanNameAware, BeanFactoryAware等)
+note right of AC #FFE4B5
+  <b>【扩展点 4.3】</b> Aware 接口注入
+end note
+
+AC -> AACBF: 4.2 applyBeanPostProcessorsBeforeInitialization
+note right of AACBF #FFE4B5
+  <b>【扩展点 4.4】</b>
+  BeanPostProcessor.postProcessBeforeInitialization (此处执行 @PostConstruct)
+end note
+
+AACBF -> AACBF: 4.3 invokeInitMethods\n(afterPropertiesSet / init-method)
+
+AACBF -> AACBF: 4.4 applyBeanPostProcessorsAfterInitialization
+note right of AACBF #FFD700
+  <b>【扩展点 4.5】AOP核心入口</b>
+  BeanPostProcessor.postProcessAfterInitialization
+  (AbstractAutoProxyCreator 在此生成代理对象，替换原始 Bean)
+end note
+deactivate AACBF
+deactivate AACBF
+deactivate BLF
+
+== 11. 容器就绪 ==
+AC -> AC: finishRefresh()
+note over AC #E0FFFF
+  <b>【Spring 事件 2】</b>
+  发布 ContextRefreshedEvent
+end note
+AC --> dev : ContextRefreshedEvent
+
+AC --> SpringApp: refresh 完成
+deactivate AC
+
+== SpringBoot 收尾阶段 ==
+SpringApp -> SpringApp: afterRefresh()\n(空实现，留给开发者扩展)
+SpringApp -> SpringApp: 发布应用就绪事件
+note right of SpringApp #E0FFFF
+  <b>【SpringBoot 事件 3】</b>
+  发布 ApplicationStartedEvent (上下文已刷新，但 Runner 未执行)
+  ---
+  <b>【SpringBoot 事件 4】</b>
+  发布 ApplicationReadyEvent (Runner 执行完毕，应用真正就绪)
+end note
+SpringApp --> dev : ApplicationStartedEvent / ApplicationReadyEvent
+
+SpringApp -> SpringApp: callRunners()
+note over SpringApp #FFE4B5
+  <b>【开发者扩展点 5】</b>
+  ApplicationRunner / CommandLineRunner
+  (在 ReadyEvent 之前执行，用于加载缓存等业务逻辑)
+end note
+
+SpringApp --> dev: Application 启动成功
+deactivate SpringApp
+
+@enduml
