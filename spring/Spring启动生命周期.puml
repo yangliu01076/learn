@@ -19,9 +19,24 @@ end box
 dev -> SpringApp: **run(args)**
 activate SpringApp
 
+SpringApp -> SpringApp: createBootstrapContext()\n遍历 所有BootstrapRegistryInitializer 并执行
+note right of SpringApp #E0FFFF
+  <b>【执行初始化器】</b>
+  返回 bootstrapContext ，可以在后续的事件中传播
+end note
+SpringApp -> SpringApp: getRunListeners(args).starting()\n获取所有 SpringApplicationRunListener 并执行 starting
+note right of SpringApp #E0FFFF
+  <b>【SpringBoot 事件 0：ApplicationStartingEvent】</b>
+  从 META-INF/spring.factories 中的 org.springframework.boot.SpringApplicationRunListener 配置里加载监听器
+  SpringBoot 的启动流程中会依次触发 7 个关键事件，
+  而 EventPublishingRunListener 就是负责把这 7 个事件广播
+  给所有实现了 ApplicationListener 接口的 Bean
+  【发布 ApplicationStartingEvent】
+end note
 SpringApp -> SpringApp: prepareEnvironment()\n准备环境变量
 note right of SpringApp #E0FFFF
-  <b>【SpringBoot 事件 1】</b>
+  <b>【SpringBoot 事件 1:ApplicationEnvironmentPreparedEvent】</b>
+  listeners.environmentPrepared()
   发布 ApplicationEnvironmentPreparedEvent
   (此时上下文还未创建，监听器可在此修改环境变量，如解密配置)
 end note
