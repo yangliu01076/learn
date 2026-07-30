@@ -1,0 +1,135 @@
+@startuml
+skinparam ranksep 40
+skinparam dpi 150
+skinparam sequenceMessageAlign center
+
+actor Developer as dev
+
+box "Spring 核心容器" #WhiteSmoke
+participant "AbstractApplicationContext" as AC
+participant "DefaultListableBeanFactory" as BLF
+participant "AbstractAutowireCapableBeanFactory" as AACBF
+end box
+
+box "后置处理器" #LightBlue
+participant "PostProcessorRegistrationDelegate" as PPRD
+participant "InstantiationAwareBeanPostProcessor" as IBPP
+participant "CommonAnnotationBeanPostProcessor" as CA_BPP
+participant "AbstractAutoProxyCreator" as AAPC
+end box
+
+box "业务 Bean" #LightGreen
+participant "YourBean" as Bean
+end box
+
+dev -> AC: **refresh()**
+activate AC
+AC -> BLF: finishBeanFactoryInitialization()
+activate BLF
+BLF -> AACBF: preInstantiateSingletons() -> getBean() -> doGetBean() -> createBean()
+
+note over AACBF #FFE4B5
+  <b>【开发者扩展点 0】</b>
+  InstantiationAwareBeanPostProcessor.postProcessBeforeInstantiation
+  (实例化前，可短路返回代理对象)
+end note
+AACBF -> IBPP: postProcessBeforeInstantiation()
+IBPP --> AACBF: null (未短路)
+
+== 1. 实例化 ==
+AACBF -> Bean: createBeanInstance()\n调用构造函数
+note over Bean #E6E6FA
+  此时对象已在内存中，但属性为空
+end note
+
+== 2. 早期暴露 (解决循环依赖) ==
+AACBF -> AACBF: addSingletonFactory()\n放入第三级缓存 singletonFactories
+
+== 3. 属性注入 ==
+note over AACBF #FFE4B5
+  <b>【开发者扩展点 1】</b>
+  InstantiationAwareBeanPostProcessor.postProcessAfterInstantiation
+  (实例化后，属性注入前，可短路默认注入逻辑)
+end note
+AACBF -> IBPP: postProcessAfterInstantiation()
+IBPP --> AACBF: true (继续注入)
+
+note over AACBF #FFE4B5
+  <b>【开发者扩展点 2】</b>
+  InstantiationAwareBeanPostProcessor.postProcessProperties
+  (解析 @Autowired, @Value，完成属性注入)
+end note
+AACBF -> IBPP: postProcessProperties()
+IBPP -> Bean: 反射设置属性值 (@Autowired 注入)
+
+== 4. 初始化阶段 ==
+AACBF -> AACBF: initializeBean()
+activate AACBF #DarkSeaGreen
+
+note over AACBF #FFE4B5
+  <b>【开发者扩展点 3】</b>
+  Aware 接口回调
+end note
+AACBF -> Bean: invokeAwareMethods()\n(BeanNameAware, BeanFactoryAware等)
+note right of Bean #E6E6FA
+  此时 Bean 拿到了容器底层组件
+end note
+
+note over AACBF #FFE4B5
+  <b>【开发者扩展点 4】</b>
+  BeanPostProcessor.postProcessBeforeInitialization
+  (初始化前回调)
+end note
+AACBF -> CA_BPP: postProcessBeforeInitialization()
+activate CA_BPP
+CA_BPP -> Bean: 执行带有 @PostConstruct 的方法
+deactivate CA_BPP
+
+note over AACBF #FFE4B5
+  <b>【开发者扩展点 5】</b>
+  自定义初始化方法
+end note
+AACBF -> Bean: invokeInitMethods()
+activate Bean #E6E6FA
+Bean -> Bean: InitializingBean.afterPropertiesSet()
+Bean -> Bean: 自定义 init-method()
+deactivate Bean
+
+note over AACBF #FFD700
+  <b>【开发者扩展点 6】AOP 核心入口</b>
+  BeanPostProcessor.postProcessAfterInitialization
+  (初始化后回调)
+end note
+AACBF -> AAPC: postProcessAfterInitialization()
+activate AAPC
+AAPC -> AAPC: 判断是否符合切点
+AAPC --> AACBF: 返回代理对象 (替换原始 Bean)
+deactivate AAPC
+
+deactivate AACBF
+AACBF -> AACBF: addSingleton()\n放入第一级缓存 singletonObjects
+deactivate AACBF
+deactivate BLF
+
+== 5. 容器就绪 ==
+AC -> AC: finishRefresh()
+note over AC #E0FFFF
+  <b>【事件发布】</b>
+  发布 ContextRefreshedEvent
+end note
+
+== 6. 销毁阶段 (容器关闭时) ==
+dev -> AC: close()\n(或注册的 ShutdownHook 触发)
+AC -> AACBF: destroySingletons()
+note over AACBF #FFE4B5
+  <b>【开发者扩展点 7】</b>
+  销毁回调
+end note
+AACBF -> Bean: destroyBean()
+activate Bean #E6E6FA
+Bean -> Bean: @PreDestroy 方法执行
+Bean -> Bean: DisposableBean.destroy()
+Bean -> Bean: 自定义 destroy-method()
+deactivate Bean
+
+@enduml
