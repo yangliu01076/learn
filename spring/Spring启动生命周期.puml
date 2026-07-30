@@ -27,6 +27,7 @@ end note
 SpringApp -> SpringApp: getRunListeners(args).starting()\n获取所有 SpringApplicationRunListener 并执行 starting
 note right of SpringApp #E0FFFF
   <b>【SpringBoot 事件 0：ApplicationStartingEvent】</b>
+  <b>【SpringApplicationRunListeners管理所有事件的同步处理】</b>
   从 META-INF/spring.factories 中的 org.springframework.boot.SpringApplicationRunListener 配置里加载监听器
   SpringBoot 的启动流程中会依次触发 7 个关键事件，
   而 EventPublishingRunListener 就是负责把这 7 个事件广播
@@ -38,12 +39,28 @@ note right of SpringApp #E0FFFF
   <b>【SpringBoot 事件 1:ApplicationEnvironmentPreparedEvent】</b>
   listeners.environmentPrepared()
   发布 ApplicationEnvironmentPreparedEvent
+  【ConfigFileApplicationListener 加载 <b>application.yml</b>】
   (此时上下文还未创建，监听器可在此修改环境变量，如解密配置)
 end note
 SpringApp --> dev : ApplicationEnvironmentPreparedEvent
 
-SpringApp -> SpringApp: createApplicationContext()\n创建 ApplicationContext
+SpringApp -> SpringApp: createApplicationContext()\n创建 ApplicationContext，加载spring.factories
 SpringApp -> SpringApp: prepareContext()\n设置环境、BeanNameGenerator等
+note right of SpringApp #E0FFFF
+    applyInitializers() 执行所有的 ApplicationContextInitializer
+    开发者可以实现 ApplicationContextInitializer，并在 spring.factories 中注册，
+    从而在这里向容器中注册一些早期的 BeanDefinition 或修改上下文状态。
+  <b>【SpringBoot 事件 2:ApplicationContextInitializedEvent】</b>
+  <b>【SpringBoot 事件 3:ApplicationPreparedEvent】</b>
+ end note
+ note right of SpringApp #E0FFFF
+  1 注册 命令行参数类，并设置到上下文中
+  beanFactory.registerSingleton("springApplicationArguments", applicationArguments);
+
+  2 默认不开启循环依赖
+
+  3 默认不允许有同名的bean
+  end note
 
 == 核心阶段：刷新上下文 ==
 SpringApp -> AC: **refresh()**
@@ -51,15 +68,34 @@ activate AC
 
 == 1. 准备阶段 ==
 AC -> AC: prepareRefresh()
+note over AC #FFE4B5
+作用：容器刷新前的准备工作。记录启动时间、初始化占位符属性源、校验必备的环境变量。
+  <b>【开发者扩展点 1】</b>
+  initPropertySources()
+  给子类覆盖，用于添加自定义的 PropertySource。
+end note
 
 == 2. 获取 BeanFactory ==
 AC -> AC: obtainFreshBeanFactory()
+note over AC #FFE4B5
+获取内部的 BeanFactory，并序列化 Bean 的定义信息。对于 SpringBoot
+ 来说，这里返回的就是之前创建好的 DefaultListableBeanFactory。
+end note
 
 == 3. 准备 BeanFactory ==
 AC -> AC: prepareBeanFactory()
+note over AC #FFE4B5
+  将 ApplicationContextAwareProcessor 注册到 BeanFactory 中，
+  用于处理 ApplicationContextAware 等接口的 Bean。获取ApplicationContext
+end note
 
 == 4. 子类扩展 (Web等) ==
 AC -> AC: postProcessBeanFactory()
+note over AC #FFE4B5
+  允许子类对 BeanFactory 进行后置处理。
+  AnnotationConfigServletWebServerApplicationContext会解析basePackages ，
+  进行this.scanner.scan(this.basePackages)
+end note
 
 == 5. 【扩展点1】执行 BeanFactoryPostProcessor ==
 AC -> PPRD: invokeBeanFactoryPostProcessors()
