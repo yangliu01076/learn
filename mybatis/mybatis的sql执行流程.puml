@@ -1,82 +1,113 @@
 @startuml
 !theme plain
-skinparam maxMessageSize 150
+skinparam maxMessageSize 200
 skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
 
 actor "应用代码" as App
 participant "SqlSession" as SqlSession
-participant "Executor" as Executor
-participant "StatementHandler" as StmtHandler
-participant "ParameterHandler" as ParamHandler
+participant "Configuration" as Config
+participant "InterceptorChain" as Chain
+participant "Executor\n(可能被代理)" as Executor
+participant "PageInterceptor\n(PageHelper)" as PageHelper
+participant "StatementHandler\n(可能被代理)" as StmtHandler
+participant "ParameterHandler\n(可能被代理)" as ParamHandler
+participant "ResultSetHandler\n(可能被代理)" as RsHandler
 participant "TypeHandler" as TypeHandler
-participant "ResultSetHandler" as RsHandler
 participant "Database" as DB
-participant "InterceptorChain" as InterceptorChain
-participant "PageInterceptor" as PageHelper
 
 note over App
-  <b>开发者扩展点：Mapper 接口与 XML 映射</b>
-  开发者编写 Mapper.java 接口和对应的 XML SQL 映射文件
+  <b>扩展点1：Mapper接口与XML映射</b>
+  开发者定义接口与SQL，由MapperRegistry注册
 end note
 
-App -> SqlSession: selectList("com.xxx.UserMapper.select", param)
+App -> SqlSession: selectList(statementId, param)
+SqlSession -> Config: getMappedStatement(statementId)
+Config --> SqlSession: MappedStatement (包含SQL等元数据)
+
+SqlSession -> Config: newExecutor(transaction, executorType)
+activate Config
+Config -> Config: 创建 BaseExecutor (Simple/Reuse/Batch)
+Config -> Config: 若 cacheEnabled 包装为 CachingExecutor
+Config -> Chain: pluginAll(executor)
+activate Chain
+note right of Chain
+  <b>扩展点2：插件代理拦截器</b>
+  遍历所有 Interceptor，使用 Plugin.wrap 生成代理类。
+end note
+Chain --> Config: 返回代理后的 Executor
+deactivate Chain
+Config --> SqlSession: Executor Proxy
+
 SqlSession -> Executor: query(MappedStatement, param, ...)
-SqlSession -> InterceptorChain: pluginAll(Executor)
-note right of InterceptorChain
-  <b>扩展点：Interceptor (插件)</b>
-  使用 @Intercepts 注解配置拦截签名。
-  通过 Plugin.wrap(target, this) 创建代理对象。
-  PageHelper 在此拦截 Executor。
+activate Executor
+
+note over Executor
+  由于 PageHelper 拦截了 Executor，此步实际调用的是 PageInterceptor.intercept()
 end note
 
-Executor -> InterceptorChain: pluginAll(StatementHandler)
-note right of InterceptorChain
-  PageHelper 的 PageInterceptor 在此拦截 Executor 的 query 方法
-end note
-
-Executor -> PageHelper: intercept(Invocation)
+Executor -> PageHelper: intercept(invocation)
 activate PageHelper
-
-PageHelper -> PageHelper: 获取并处理 ThreadLocal 中的分页参数
+PageHelper -> PageHelper: 从 ThreadLocal 获取分页参数
 note right of PageHelper
-  <b>PageHelper 分页逻辑：</b>
-  若检测到分页参数，执行 count 查询。
-  然后修改原 SQL，拼接 LIMIT/OFFSET。
+  <b>PageHelper 核心扩展逻辑：</b>
+  1. 执行 count 查询计算总数。
+  2. 获取原 BoundSql。
+  3. 修改 SQL 拼接 LIMIT/OFFSET。
+  4. 将修改后的 BoundSql 覆盖回 MappedStatement。
 end note
 
-PageHelper -> Executor: invocation.proceed() (执行原始或改写后的查询)
+PageHelper -> Executor: invocation.proceed() (执行改写后的查询)
 deactivate PageHelper
 
-Executor -> Executor: createStatementHandler()
+Executor -> Config: newStatementHandler(executor, ms, parameter, ...)
+activate Config
+Config -> Config: 创建 RoutingStatementHandler (路由到 Simple/Prepared/Callable)
+Config -> Chain: pluginAll(statementHandler)
+Config --> Executor: 返回代理后的 StatementHandler
+deactivate Config
+
 Executor -> StmtHandler: prepare(connection, transactionTimeout)
+activate StmtHandler
+StmtHandler -> DB: 获取 java.sql.PreparedStatement
 
-StmtHandler -> InterceptorChain: pluginAll(StatementHandler)
-note right of InterceptorChain
-  <b>扩展点：Interceptor 插件</b>
-  可在此拦截 StatementHandler 的 prepare 或 parameterize 方法
-end note
+Executor -> Config: newParameterHandler(ms, parameter, boundSql)
+activate Config
+Config -> Chain: pluginAll(parameterHandler)
+Config --> Executor: 返回代理后的 ParameterHandler
+deactivate Config
 
-StmtHandler -> StmtHandler: instantiateStatement()
-StmtHandler -> ParamHandler: setParameters(preparedStatement)
+Executor -> ParamHandler: setParameters(preparedStatement)
+activate ParamHandler
 note over ParamHandler, TypeHandler
-  <b>扩展点：ParameterHandler / TypeHandler</b>
-  开发者可自定义 ParameterHandler 设置参数。
-  可实现自定义 TypeHandler 处理特殊 Java-JDBC 类型映射。
+  <b>扩展点3：ParameterHandler & TypeHandler</b>
+  设置参数时，TypeHandler 负责将 Java 类型转为 JDBC 类型。
 end note
-
 ParamHandler -> TypeHandler: setParameter(ps, i, parameter, jdbcType)
 TypeHandler -> DB: stmt.setXxx(i, value)
+deactivate ParamHandler
 
 StmtHandler -> DB: execute()
-
 DB --> StmtHandler: executeQuery() -> ResultSet
-StmtHandler -> RsHandler: handleResultSets(preparedStatement)
-note over RsHandler
-  <b>扩展点：ResultSetHandler</b>
-  开发者可自定义结果集映射逻辑，或在 Interceptor 中拦截
-  ResultSetHandler 的 handleResultSets 方法。
-end note
 
-RsHandler -> App: 返回 List<E> 结果
+Executor -> Config: newResultSetHandler(executor, ms, parameterHandler, ...)
+activate Config
+Config -> Chain: pluginAll(resultSetHandler)
+Config --> Executor: 返回代理后的 ResultSetHandler
+deactivate Config
+
+Executor -> RsHandler: handleResultSets(preparedStatement)
+activate RsHandler
+note over RsHandler
+  <b>扩展点4：ResultSetHandler</b>
+  负责将 JDBC ResultSet 映射为 Java 对象集合。
+  可在此拦截处理结果集映射。
+end note
+RsHandler --> Executor: 返回 List<E> 结果
+deactivate RsHandler
+deactivate StmtHandler
+
+Executor --> SqlSession: 返回查询结果
+SqlSession --> App: 返回结果
 
 @enduml
