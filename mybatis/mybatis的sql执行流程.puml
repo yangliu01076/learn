@@ -1,0 +1,82 @@
+@startuml
+!theme plain
+skinparam maxMessageSize 150
+skinparam sequenceMessageAlign center
+
+actor "应用代码" as App
+participant "SqlSession" as SqlSession
+participant "Executor" as Executor
+participant "StatementHandler" as StmtHandler
+participant "ParameterHandler" as ParamHandler
+participant "TypeHandler" as TypeHandler
+participant "ResultSetHandler" as RsHandler
+participant "Database" as DB
+participant "InterceptorChain" as InterceptorChain
+participant "PageInterceptor" as PageHelper
+
+note over App
+  <b>开发者扩展点：Mapper 接口与 XML 映射</b>
+  开发者编写 Mapper.java 接口和对应的 XML SQL 映射文件
+end note
+
+App -> SqlSession: selectList("com.xxx.UserMapper.select", param)
+SqlSession -> Executor: query(MappedStatement, param, ...)
+SqlSession -> InterceptorChain: pluginAll(Executor)
+note right of InterceptorChain
+  <b>扩展点：Interceptor (插件)</b>
+  使用 @Intercepts 注解配置拦截签名。
+  通过 Plugin.wrap(target, this) 创建代理对象。
+  PageHelper 在此拦截 Executor。
+end note
+
+Executor -> InterceptorChain: pluginAll(StatementHandler)
+note right of InterceptorChain
+  PageHelper 的 PageInterceptor 在此拦截 Executor 的 query 方法
+end note
+
+Executor -> PageHelper: intercept(Invocation)
+activate PageHelper
+
+PageHelper -> PageHelper: 获取并处理 ThreadLocal 中的分页参数
+note right of PageHelper
+  <b>PageHelper 分页逻辑：</b>
+  若检测到分页参数，执行 count 查询。
+  然后修改原 SQL，拼接 LIMIT/OFFSET。
+end note
+
+PageHelper -> Executor: invocation.proceed() (执行原始或改写后的查询)
+deactivate PageHelper
+
+Executor -> Executor: createStatementHandler()
+Executor -> StmtHandler: prepare(connection, transactionTimeout)
+
+StmtHandler -> InterceptorChain: pluginAll(StatementHandler)
+note right of InterceptorChain
+  <b>扩展点：Interceptor 插件</b>
+  可在此拦截 StatementHandler 的 prepare 或 parameterize 方法
+end note
+
+StmtHandler -> StmtHandler: instantiateStatement()
+StmtHandler -> ParamHandler: setParameters(preparedStatement)
+note over ParamHandler, TypeHandler
+  <b>扩展点：ParameterHandler / TypeHandler</b>
+  开发者可自定义 ParameterHandler 设置参数。
+  可实现自定义 TypeHandler 处理特殊 Java-JDBC 类型映射。
+end note
+
+ParamHandler -> TypeHandler: setParameter(ps, i, parameter, jdbcType)
+TypeHandler -> DB: stmt.setXxx(i, value)
+
+StmtHandler -> DB: execute()
+
+DB --> StmtHandler: executeQuery() -> ResultSet
+StmtHandler -> RsHandler: handleResultSets(preparedStatement)
+note over RsHandler
+  <b>扩展点：ResultSetHandler</b>
+  开发者可自定义结果集映射逻辑，或在 Interceptor 中拦截
+  ResultSetHandler 的 handleResultSets 方法。
+end note
+
+RsHandler -> App: 返回 List<E> 结果
+
+@enduml
