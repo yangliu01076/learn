@@ -8,12 +8,14 @@ actor "应用代码" as App
 participant "SqlSession" as SqlSession
 participant "Configuration" as Config
 participant "InterceptorChain" as Chain
-participant "Executor\n(可能被代理)" as Executor
+participant "CachingExecutor\n(二级缓存装饰器)" as CachingExec
+participant "BaseExecutor\n(一级缓存/Simple)" as BaseExec
 participant "PageInterceptor\n(PageHelper)" as PageHelper
 participant "StatementHandler\n(可能被代理)" as StmtHandler
 participant "ParameterHandler\n(可能被代理)" as ParamHandler
 participant "ResultSetHandler\n(可能被代理)" as RsHandler
 participant "TypeHandler" as TypeHandler
+participant "Transaction" as Tx
 participant "Database" as DB
 
 note over App
@@ -38,15 +40,16 @@ end note
 Chain --> Config: 返回代理后的 Executor
 deactivate Chain
 Config --> SqlSession: Executor Proxy
+deactivate Config
 
-SqlSession -> Executor: query(MappedStatement, param, ...)
-activate Executor
+SqlSession -> CachingExec: query(MappedStatement, param, ...)
+activate CachingExec
 
-note over Executor
-  由于 PageHelper 拦截了 Executor，此步实际调用的是 PageInterceptor.intercept()
+note over CachingExec
+  若被 PageHelper 拦截，实际先执行 PageInterceptor.intercept()
 end note
 
-Executor -> PageHelper: intercept(invocation)
+CachingExec -> PageHelper: intercept(invocation)
 activate PageHelper
 PageHelper -> PageHelper: 从 ThreadLocal 获取分页参数
 note right of PageHelper
@@ -56,28 +59,54 @@ note right of PageHelper
   3. 修改 SQL 拼接 LIMIT/OFFSET。
   4. 将修改后的 BoundSql 覆盖回 MappedStatement。
 end note
-
-PageHelper -> Executor: invocation.proceed() (执行改写后的查询)
+PageHelper -> CachingExec: invocation.proceed() (执行改写后的查询)
 deactivate PageHelper
 
-Executor -> Config: newStatementHandler(executor, ms, parameter, ...)
+CachingExec -> CachingExec: 获取 Cache，查二级缓存
+note right of CachingExec
+  <b>二级缓存机制：</b>
+  命中则直接返回。未命中则查DB。
+  查询结果暂存到 TransactionalCache 中，
+  待 Session commit() 时才真正刷入二级缓存。
+end note
+
+CachingExec -> BaseExec: query(ms, parameter, ..., boundSql)
+activate BaseExec
+
+BaseExec -> BaseExec: 查询一级缓存 (PerpetualCache)
+note right of BaseExec
+  <b>一级缓存机制：</b>
+  基于 Executor 的本地 HashMap。
+  增删改操作或 flushCache=true 会清空该缓存。
+end note
+
+BaseExec -> Config: newStatementHandler(executor, ms, parameter, ...)
 activate Config
 Config -> Config: 创建 RoutingStatementHandler (路由到 Simple/Prepared/Callable)
 Config -> Chain: pluginAll(statementHandler)
-Config --> Executor: 返回代理后的 StatementHandler
+Config --> BaseExec: 返回代理后的 StatementHandler
 deactivate Config
 
-Executor -> StmtHandler: prepare(connection, transactionTimeout)
+BaseExec -> StmtHandler: prepare(connection, transactionTimeout)
 activate StmtHandler
-StmtHandler -> DB: 获取 java.sql.PreparedStatement
 
-Executor -> Config: newParameterHandler(ms, parameter, boundSql)
+StmtHandler -> Tx: getConnection()
+activate Tx
+Tx -> DB: 获取 java.sql.Connection
+DB --> Tx: Connection
+Tx --> StmtHandler: Connection
+deactivate Tx
+
+StmtHandler -> DB: prepare(Connection, SQL)
+DB --> StmtHandler: java.sql.PreparedStatement
+
+BaseExec -> Config: newParameterHandler(ms, parameter, boundSql)
 activate Config
 Config -> Chain: pluginAll(parameterHandler)
-Config --> Executor: 返回代理后的 ParameterHandler
+Config --> BaseExec: 返回代理后的 ParameterHandler
 deactivate Config
 
-Executor -> ParamHandler: setParameters(preparedStatement)
+BaseExec -> ParamHandler: setParameters(preparedStatement)
 activate ParamHandler
 note over ParamHandler, TypeHandler
   <b>扩展点3：ParameterHandler & TypeHandler</b>
@@ -90,24 +119,31 @@ deactivate ParamHandler
 StmtHandler -> DB: execute()
 DB --> StmtHandler: executeQuery() -> ResultSet
 
-Executor -> Config: newResultSetHandler(executor, ms, parameterHandler, ...)
+BaseExec -> Config: newResultSetHandler(executor, ms, parameterHandler, ...)
 activate Config
 Config -> Chain: pluginAll(resultSetHandler)
-Config --> Executor: 返回代理后的 ResultSetHandler
+Config --> BaseExec: 返回代理后的 ResultSetHandler
 deactivate Config
 
-Executor -> RsHandler: handleResultSets(preparedStatement)
+BaseExec -> RsHandler: handleResultSets(preparedStatement)
 activate RsHandler
 note over RsHandler
   <b>扩展点4：ResultSetHandler</b>
   负责将 JDBC ResultSet 映射为 Java 对象集合。
   可在此拦截处理结果集映射。
 end note
-RsHandler --> Executor: 返回 List<E> 结果
+RsHandler --> BaseExec: 返回 List<E> 结果
 deactivate RsHandler
 deactivate StmtHandler
 
-Executor --> SqlSession: 返回查询结果
+BaseExec -> BaseExec: 将结果存入一级缓存
+BaseExec --> CachingExec: 返回查询结果
+deactivate BaseExec
+
+CachingExec -> CachingExec: 将结果暂存至二级缓存 (TransactionalCacheManager)
+CachingExec --> SqlSession: 返回查询结果
+deactivate CachingExec
+
 SqlSession --> App: 返回结果
 
 @enduml
