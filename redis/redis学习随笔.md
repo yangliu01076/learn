@@ -77,6 +77,36 @@ Redis 4.0 开始支持混合持久化，将 RDB 和 AOF 的优点结合起来。
 服务准备就绪  
 
 # RESP协议
+RESP（Redis Serialization Protocol）是 Redis 客户端与服务端之间的通信协议。  
+特点：文本协议，简单可读，易于解析。  
+
+5 种数据类型：  
+* 简单字符串（Simple String）：`+OK\r\n`，表示成功响应。
+* 错误（Error）：`-ERR unknown command\r\n`，表示错误信息。
+* 整数（Integer）：`:1000\r\n`，表示整数响应（如 INCR 的返回值）。
+* 批量字符串（Bulk String）：`$6\r\nfoobar\r\n`，$ 后跟字节数，再跟实际内容。
+  `$-1\r\n` 表示 null。
+* 数组（Array）：`*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n`，* 后跟元素个数，再依次跟每个元素。  
+
+客户端发送命令：以 Bulk String 数组形式发送，如 `SET name Tom` 会被编码为
+`*3\r\n$3\r\nSET\r\n$4\r\nname\r\n$3\r\nTom\r\n`。  
+
+RESP3（Redis 6.0 引入）：新增了 Map、Set、Push、Big Number、Verbatim String、
+Typed Stream 等类型，支持客户端缓存、推送通知等新特性。  
 
 # Redisson WatchDog 机制：
+问题：分布式锁设置了过期时间，但业务执行时间超过了锁的过期时间，导致锁提前释放，
+其他线程获取到锁，产生并发问题。  
+
+机制：看门狗定时检查锁是否还被当前线程持有，如果是则自动续期。  
+* 默认锁过期时间 30 秒（lockWatchdogTimeout）。
+* 每隔 10 秒（lockWatchdogTimeout / 3）检查一次，如果锁还被当前线程持有，
+  则将过期时间重置为 30 秒。
+* 底层用 Netty 的 HashedWheelTimer（时间轮）调度定时任务，通过 Lua 脚本原子性
+  地判断 + 续期。  
+
+注意：  
+* 只有在调用 `lock()` 不指定 leaseTime 时才会启动看门狗。如果调用
+  `lock(10, TimeUnit.SECONDS)` 指定了过期时间，则不会续期，到时间自动释放。
+* 如果持有锁的进程崩溃，看门狗也会停止，锁会在过期时间后自动释放，不会死锁。
 
